@@ -1,8 +1,8 @@
 import gym
 import torch
 import torch.nn as nn
-import numpy as np
 import random
+
 
 
 class DQN(nn.Module):
@@ -15,10 +15,11 @@ class DQN(nn.Module):
 
 
 class DQNAgent:
-    def __init__(self, state_size, action_size, lr=0.01, gamma=0.99):
+    def __init__(self, state_size, action_size, lr=0.01, gamma=0.99, device="cpu"):
+        self.device = torch.device(device)
         self.state_size = state_size
         self.action_size = action_size
-        self.model = DQN(state_size, action_size)
+        self.model = DQN(state_size, action_size).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.gamma = gamma
         self.loss_fn = nn.MSELoss()
@@ -28,14 +29,14 @@ class DQNAgent:
             return random.randint(0, self.action_size - 1)
         else:
             with torch.no_grad():
-                q_values = self.model(torch.tensor(state, dtype=torch.float32))
+                q_values = self.model(torch.tensor(state, dtype=torch.float32).to(self.device))
                 return torch.argmax(q_values).item()
 
     def update(self, state, action, reward, next_state, done):
-        state = torch.tensor(state, dtype=torch.float32)
-        next_state = torch.tensor(next_state, dtype=torch.float32)
-        reward = torch.tensor(reward, dtype=torch.float32)
-        action = torch.tensor(action)
+        state_tensor = torch.tensor(state, dtype=torch.float32).to(self.device)
+        next_state = torch.tensor(next_state, dtype=torch.float32).to(self.device)
+        reward = torch.tensor(reward, dtype=torch.float32).to(self.device)
+        action = torch.tensor(action).to(self.device)
 
         if done:
             target = reward
@@ -43,27 +44,43 @@ class DQNAgent:
             with torch.no_grad():
                 target = reward + self.gamma * torch.max(self.model(next_state))
 
-        prediction = self.model(state)[action]
+        prediction = self.model(state_tensor)[action]
 
         loss = self.loss_fn(target, prediction)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
+    def save(self, path):
+        torch.save(self.model.state_dict(), path)
+        print('Model saved!', path, sep='\n')
+
+    def load(self, path):
+        self.model.load_state_dict(torch.load(path))
+        print('Model loaded!', path, sep='\n')
+
 
 def train(agent, env, episodes, epsilon_start=1.0, epsilon_end=0.01, epsilon_decay=0.995):
     epsilon = epsilon_start
     for episode in range(episodes):
-        state = env.reset()
+        state, _ = env.reset()
         done = False
         while not done:
             action = agent.get_action(state, epsilon)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, _, _ = env.step(action)
             agent.update(state, action, reward, next_state, done)
             state = next_state
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
+    env.close()
 
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 env = gym.make('CartPole-v1')
-agent = DQNAgent(state_size=4, action_size=2)
-train(agent, env, episodes=500)
+agent = DQNAgent(state_size=4, action_size=2, device=device)
+train(agent, env, episodes=10000)
+
+print('Training finished!')
+
+agent.save('model/model.pth')
+
+
